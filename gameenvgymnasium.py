@@ -1,12 +1,14 @@
-from gym import Env
-from gym.spaces import Discrete, Box, Dict as GymDict
+# from gym import Env
+import gymnasium as gym
+# from gym.spaces import Discrete, Box, Dict as GymDict
+from gymnasium.spaces import Discrete, Box, Dict as GymDict
 import numpy as np
 import random
 import requests
 from typing import Optional, Any, Dict
 import time
 
-class GameEnv(Env):
+class GameEnv(gym.Env):
     def __init__(self, action_space_size: int):
         super(GameEnv, self).__init__()
 
@@ -55,7 +57,7 @@ class GameEnv(Env):
         except requests.exceptions.ConnectionError:
             print("Error connecting to the server")
             # Observation space all zeros, -100 reward, done=True, info={}
-            return np.zeros(self.observation_space.shape, dtype=np.float32), -100.0, True, {}
+            return np.zeros(self.observation_space.shape, dtype=np.float32), -100.0, True, False, {}
 
         
         try:
@@ -64,11 +66,11 @@ class GameEnv(Env):
             current_state = state_response.json()
 
             if current_state['player']['hp'] <= 0:
-                return np.zeros(self.observation_space.shape, dtype=np.float32), -50, True, {}
+                return np.zeros(self.observation_space.shape, dtype=np.float32), -50, True, False, {}
         except requests.exceptions.ConnectionError:
             print("Error connecting to the server")
             # Observation space all zeros, -100 reward, done=True, info={}
-            return np.zeros(self.observation_space.shape, dtype=np.float32), -100.0, True, {}
+            return np.zeros(self.observation_space.shape, dtype=np.float32), -100.0, True, False, {}
 
         reward = self._calculate_reward(self.previous_state, current_state)
         new_observation = self._process_state_data(current_state)
@@ -77,13 +79,17 @@ class GameEnv(Env):
         done = current_state["player"]["hp"] <= 0
         # print(f"\n[STEP] Player HP: {current_state['player']['hp']} -> Done: {done}\n")
         info = {}
+        terminated = done
+        truncated = False
 
-        return new_observation, reward, done, info
+        return new_observation, reward, terminated, truncated, info
 
     def render(self):
         pass
 
-    def reset(self):
+    def reset(self, *, seed: Optional[int] = None, options: Optional[dict] = None):
+        super().reset(seed=seed)
+        info = {}
         max_retries = 10
         for attempt in range(max_retries):
             try:
@@ -95,16 +101,16 @@ class GameEnv(Env):
                 if initial_state['player']['hp'] > 0:
                     self.previous_state = initial_state
                     self.step_count = 0
-                    return self._process_state_data(initial_state)
+                    return self._process_state_data(initial_state), info
                 # else:
                     # print(f"[RESET] Attempt {attempt+1}: Invalid HP ({initial_state['player']['hp']}). Retrying...")
 
             except requests.exceptions.ConnectionError:
                 print("Error connecting to the server")
-                return np.zeros(self.observation_space.shape, dtype=np.float32)
+                return np.zeros(self.observation_space.shape, dtype=np.float32), info
 
         print("Failed to reset with valid HP after multiple attempts.")
-        return np.zeros(self.observation_space.shape, dtype=np.float32)
+        return np.zeros(self.observation_space.shape, dtype=np.float32), info
     
     def _calculate_reward(self, previous_state: Optional[Dict[str, Any]], current_state: Optional[Dict[str, Any]]) -> float:
         if previous_state is None:
@@ -118,7 +124,7 @@ class GameEnv(Env):
         player_pos = (current_state['player']['x'], current_state['player']['y'])
         player_prev_pos = (previous_state['player']['x'], previous_state['player']['y'])
 
-        if np.linalg.norm(np.array(player_pos) - np.array(comp_loc)) < 0.1:
+        if np.linalg.norm(np.array(player_pos) - np.array(player_prev_pos)) < 0.1:
             reward -= 0.1
 
         for comp_loc in self.computer_locations:
@@ -215,4 +221,4 @@ class GameEnv(Env):
         #     "zombies": zombie_obs,
         #     "computer_completion": completion_obs
         # }
-        return np.concatenate([player_obs, zombie_obs, completion_obs])
+        return np.concatenate([player_obs, zombie_obs, completion_obs]).astype(np.float32)
